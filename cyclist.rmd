@@ -1,0 +1,383 @@
+---
+title: "Case Study: How Does a Bike-Share Navigate Speedy Success?"
+author: "Dejan Kutanoski"
+date: "2023-04-12"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+```{r}
+library(tidyverse)
+library(janitor)
+library(lubridate)
+library(readr)
+library(geosphere)
+library(ggmap)
+library(ggplot2)
+library(scales)
+library(formattable)
+library(gt) #fancy tables
+library(gtExtras) #fancy tables
+library(hms)
+
+
+```
+
+#### Importing all 12 data sets in 12 different data sets
+
+```{r}
+data_01 <- read_csv("./case study/202204-divvy-tripdata.csv")
+data_02 <- read_csv("./case study/202205-divvy-tripdata.csv")
+data_03 <- read_csv("./case study/202206-divvy-tripdata.csv")
+data_04 <- read_csv("./case study/202207-divvy-tripdata.csv")
+data_05 <- read_csv("./case study/202208-divvy-tripdata.csv")
+data_06 <- read_csv("./case study/202209-divvy-publictripdata.csv")
+data_07 <- read_csv("./case study/202210-divvy-tripdata.csv")
+data_08 <- read_csv("./case study/202211-divvy-tripdata.csv")
+data_09 <- read_csv("./case study/202212-divvy-tripdata.csv")
+data_10 <- read_csv("./case study/202301-divvy-tripdata.csv")
+data_11 <- read_csv("./case study/202302-divvy-tripdata.csv")
+data_12 <- read_csv("./case study/202303-divvy-tripdata.csv")
+```
+
+#### Binding all 12 data sets in one large data set
+
+```{r}
+all_trips <- bind_rows(data_01, data_02, data_03, data_04, data_05, 
+                      data_06, data_07, data_08, data_09, data_10, data_11, data_12)
+
+```
+
+```{r}
+colnames(all_trips)  #List of column names
+dim(all_trips)  #Dimensions of the data frame
+head(all_trips)  #See the first 6 rows of data frame
+str(all_trips)  #See list of columns and data types (numeric, character, etc)
+summary(all_trips)  #Statistical summary of data. Mainly for numeric.
+```
+
+#### Inserting columns for Date, Start Time, Month, Day, Year and Day of the week.
+
+```{r}
+all_trips$date <- as.Date(all_trips$started_at) 
+all_trips$start_time <- strftime(all_trips$started_at, "%H")
+all_trips$month <- format(as.Date(all_trips$date), "%B") 
+all_trips$day <- format(as.Date(all_trips$date), "%d") 
+all_trips$year <- format(as.Date(all_trips$date), "%Y")
+all_trips$day_of_week <- format(as.Date(all_trips$date), "%A") 
+
+```
+
+#### Inserting columns for Ride length in minutes and ride distance in km.
+
+```{r}
+
+all_trips$ride_length = round(difftime(ymd_hms(all_trips$ended_at), ymd_hms(all_trips$started_at), units = "mins"), digits = 1)
+all_trips$ride_distance <- distGeo(matrix(c(all_trips$start_lng,all_trips$start_lat),ncol = 2), matrix(c(all_trips$end_lng,all_trips$end_lat),ncol = 2))
+all_trips$ride_distance <- all_trips$ride_distance/1000 #distance in km
+```
+
+```{r}
+colnames(all_trips)  #List of column names
+dim(all_trips)  #Dimensions of the data frame
+head(all_trips)  #See the first 6 rows of data frame
+str(all_trips)  #See list of columns and data types (numeric, character, etc)
+```
+#### Cleaning Data
+
+```{r}
+all_trips_v1 <- distinct(all_trips)
+all_trips_v1 <- all_trips[!(all_trips$ride_length <= 0),]
+```
+
+#### There was 10.631 rows deleted
+
+```{r}
+dim(all_trips_v1)  #Dimensions of the data frame
+head(all_trips_v1)
+```
+
+#### Analysis
+
+#### Max, Min, Average and Mid Rides by subscribers
+
+```{r}
+all_trips_v1 %>% 
+  summarise(max=max(ride_length),min_ride_length = min(ride_length),mean=mean(ride_length),median=median(ride_length))%>%
+  rename(`Max Ride Minutes` = max, `Min Ride Minutes` = min_ride_length ,`Average Ride Minutes` = mean, `Mid Point Minutes`= median)%>%
+gt() %>% 
+    gt_theme_guardian() 
+```
+
+#### Member VS Casual subscribers in 12 months
+
+```{r}
+all_trips_v1 %>% 
+  group_by(member_casual) %>% 
+  summarise(number_of_rides = n(), ride_percentage =formattable::percent(length(ride_id) / nrow(all_trips_v1)))%>%
+  rename(Subscriber = member_casual, `Total Rides` = number_of_rides, Percentage = ride_percentage )%>%
+gt() %>% 
+    gt_theme_guardian() %>% 
+    data_color(
+        columns = 'Percentage', colors = c("#7d3ac1"))
+```
+
+#### Visualization - Percentage Member VS Casual subscribers in 12 months
+
+```{r}
+all_trips_v1 %>% 
+  group_by(member_casual) %>% 
+  summarise(number_of_rides = n(), ride_percentage =formattable::percent(length(ride_id) / nrow(all_trips_v1)))%>% 
+
+ggplot(aes(x="", y=number_of_rides, fill=member_casual)) +
+    geom_bar(stat="identity", width=1, color="white") +
+  labs(title ="Percentage of Rides per Subscriber")+
+  geom_text(aes(label = ride_percentage),
+            position = position_stack(vjust = 0.5)) +
+  
+    coord_polar(theta = "y") +
+  theme_minimal() +
+    theme(legend.title = element_text(),
+          legend.text = element_text(face="bold"),
+          axis.title = element_blank(),
+          axis.text = element_blank(),
+          panel.grid.major = element_blank(), 
+          panel.grid.minor = element_blank(),
+          plot.margin = margin(1,1,1.5,1.2, "cm"),
+          plot.title = element_text(face="bold"))
+```
+
+#### Members VS Causal subscribers depending on the ride length
+
+```{r}
+all_trips_v1 %>%
+  group_by(member_casual) %>% 
+  summarise(average_ride_length = mean(ride_length), median_length = median(ride_length), 
+            max_ride_length = max(ride_length), min_ride_length = min(ride_length))%>%
+rename(Subscriber = member_casual, `Min Ride Minutes` = min_ride_length ,`Average Ride Minutes` = average_ride_length, `Mid Point Minute`= median_length, `Max Ride Minute`= max_ride_length)%>% 
+
+gt() %>% 
+    gt_theme_guardian() 
+```
+
+#### Total rides and average ride time by each day for members vs casual riders
+
+```{r}
+# fixing the days of the week order.
+all_trips_v1$day_of_week <- ordered(all_trips_v1$day_of_week, 
+                                    levels=c("Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"))
+all_trips_v1 %>% 
+  group_by(member_casual, day_of_week) %>%  #groups by member_casual
+  summarise(number_of_rides = n() #calculates the current number of rides 
+  ,average_ride_length = round(mean(ride_length),digits =1),.groups="drop") %>% # calculates the average duration
+  arrange(member_casual, day_of_week)%>% #sorting
+rename(Subscriber = member_casual, `Day of the week` = day_of_week, `Number of rides` = number_of_rides,`Average ride in minutes` = average_ride_length )%>%
+gt() %>% 
+    gt_theme_guardian() 
+
+# Viz
+all_trips_v1 %>%  
+  group_by(member_casual, day_of_week) %>% 
+  summarise(number_of_rides = n(), .groups="drop") %>% 
+  arrange(member_casual, day_of_week)  %>% 
+  ggplot(aes(x = day_of_week, y = number_of_rides, fill = member_casual)) +
+  labs(title ="Members VS Casual Riders in Days of the Week",x= "Day of the week", y="Number of rides") +
+  geom_col(width=0.5, position = position_dodge(width=0.5)) +
+  scale_y_continuous(labels = function(x) format(x, scientific = FALSE)) +
+  theme_minimal() +
+    theme(legend.title = element_text(),
+          legend.text = element_text(face="bold"),
+          axis.title = element_text(),
+          axis.text.x = element_text(),
+          axis.text.y = element_blank(),
+          panel.grid.major = element_blank(), 
+          panel.grid.minor = element_blank(),
+          plot.margin = margin(1,1,1.5,1.2, "cm"),
+          plot.title = element_text(face="bold"))
+    
+
+# Viz 2
+all_trips_v1 %>%  
+  group_by(member_casual, day_of_week) %>% 
+  summarise(average_ride_length = round(mean(ride_length),digits =1), .groups="drop") %>%
+  ggplot(aes(x = day_of_week, y = average_ride_length, fill = member_casual)) +
+  geom_col(width=0.5, position = position_dodge(width=0.5)) + 
+  labs(title ="Average ride time by Members and Casual riders Vs. Day of the week",x= "Day of the week", y="Number of rides")+
+  theme_minimal() +
+    theme(legend.title = element_text(),
+          legend.text = element_text(face="bold"),
+          axis.title = element_text(),
+          axis.text.x = element_text(),
+          axis.text.y = element_blank(),
+          panel.grid.major = element_blank(), 
+          panel.grid.minor = element_blank(),
+          plot.margin = margin(1,1,1.5,1.2, "cm"),
+          plot.title = element_text(face="bold"))
+
+```
+
+#### Which weekday most bike are rented
+
+```{r plot1: mode of the week_day, echo=TRUE, eval=TRUE, error=TRUE}
+  all_trips_v1 %>% 
+  group_by(day_of_week) %>% 
+  summarise(number_of_rides = n()) %>% 
+  ggplot(aes(x = day_of_week, y = number_of_rides, fill = day_of_week)) + geom_col()+
+  labs(title = "Most Rides per Weekday", x= "Day of Week", y = "Number of Rides" )+
+  theme_minimal() +
+    theme(legend.title = element_text(),
+          legend.text = element_text(face="bold"),
+          axis.title = element_text(),
+          axis.text.x = element_text(),
+          axis.text.y = element_blank(),
+          panel.grid.major = element_blank(), 
+          panel.grid.minor = element_blank(),
+          plot.margin = margin(1,1,1.5,1.2, "cm"),
+          plot.title = element_text(face="bold"))
+
+```
+
+#### Bar Chart of total rides by bike type
+
+```{r}
+all_trips_v1 %>% 
+    group_by(member_casual, rideable_type) %>% 
+    summarize(number_of_rides = n()) %>% 
+    ggplot(aes(x=rideable_type, y=number_of_rides, fill=member_casual)) +
+    
+  geom_col(position = "stack", alpha=0.7, radius = grid::unit(5, "mm"), width = 0.6)+
+    coord_flip() +
+    scale_y_continuous(labels = unit_format(unit = "K", scale = 1e-3)) +
+    scale_fill_manual(values=c("#ea7369","#7d3ac1"), breaks = c("casual", "member"), labels=c("Casual", "Member")) +
+    scale_x_discrete(labels = c("Classic Bike", "Docked Bike", "Electric Bike")) + #labels axis ticks manually 
+    geom_text(aes(label = label_comma()(number_of_rides)), position = position_stack(vjust = 0.5), colour="black", fontface="bold") + #label values shown fully
+    ggtitle("Total Rides by Subscription and Bike Type") +
+    labs(x = "Bike Type",
+         y = "Number of rides",
+         fill = "Type of Member") +
+    theme_minimal() +
+    theme(legend.title = element_blank(),
+          legend.text = element_text(face="bold"),
+          axis.title = element_blank(),
+          axis.text = element_text(face="bold"),
+          panel.grid.major = element_blank(), 
+          panel.grid.minor = element_blank(),
+          plot.margin = margin(1,1,1.5,1.2, "cm"),
+          plot.title = element_text(face="bold"))
+```
+
+#### Total rides and average ride time by month for members vs casual riders
+
+```{r}
+all_trips_v1$month <- ordered(all_trips_v1$month, 
+                            levels=c("January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"))
+all_trips_v1 %>% 
+  group_by(member_casual, month) %>%  
+  summarise(number_of_rides = n(), average_ride_length = round(mean(ride_length),digits =1), .groups="drop") %>% 
+  arrange(member_casual, month)%>% 
+  rename(Subscriber = member_casual, `Month` = month, `Number of rides` = number_of_rides,`Average ride in minutes` = average_ride_length )%>%
+gt() %>% 
+    gt_theme_guardian() 
+```
+
+```{r}
+all_trips_v1 %>%  
+  group_by(member_casual, month) %>% 
+  summarise(number_of_rides = n(), .groups="drop") %>% 
+  arrange(member_casual, month)  %>% 
+  ggplot(aes(x = month, y = number_of_rides, fill = member_casual)) +
+  labs(title ="Members VS Casual Riders in Months",x= "Months", y="Number of rides") +
+  geom_col(width=0.5, position = position_dodge(width=0.5)) +
+  scale_y_continuous(labels = function(x) format(x, scientific = FALSE)) +
+  theme_minimal() +
+    theme(legend.title = element_text(),
+          legend.text = element_text(face="bold"),
+          axis.title = element_text(),
+          axis.text.x = element_text(angle = 45),
+          axis.text.y = element_blank(),
+          panel.grid.major = element_blank(), 
+          panel.grid.minor = element_blank(),
+          plot.margin = margin(1,1,1.5,1.2, "cm"),
+          plot.title = element_text(face="bold"))
+```
+
+```{r}
+all_trips_v1 %>%  
+  group_by(member_casual, month) %>% 
+  summarise(average_ride_length = mean(ride_length),.groups="drop") %>%
+  ggplot(aes(x = month, y = average_ride_length, fill = member_casual)) +
+  geom_col(width=0.5, position = position_dodge(width=0.5)) + 
+  labs(title ="Average ride length by Members and Casual riders Vs. Month", x="Months", y="Average Ride Length") +
+  theme_minimal() +
+    theme(legend.title = element_text(),
+          legend.text = element_text(face="bold"),
+          axis.title = element_text(),
+          axis.text.x = element_text(angle = 45),
+          axis.text.y = element_blank(),
+          panel.grid.major = element_blank(), 
+          panel.grid.minor = element_blank(),
+          plot.margin = margin(1,1,1.5,1.2, "cm"),
+          plot.title = element_text(face="bold"))
+```
+
+```{r}
+
+all_trips_v1 %>% 
+  group_by(member_casual) %>% drop_na() %>%
+  summarise(average_ride_distance = mean(ride_distance)) %>%
+  ggplot() + 
+  geom_col(mapping= aes(x= member_casual,y= average_ride_distance,fill=member_casual), show.legend = FALSE)+
+  labs(title = "Average travel distance by Members and Casual riders", x="Member and Casual riders", y="Average distance In Km")+
+theme_minimal() +
+    theme(legend.title = element_text(),
+          legend.text = element_text(face="bold"),
+          axis.title = element_text(),
+          axis.text.x = element_text(),
+          axis.text.y = element_text(),
+          panel.grid.major = element_blank(), 
+          panel.grid.minor = element_blank(),
+          plot.margin = margin(1,1,1.5,1.2, "cm"),
+          plot.title = element_text(face="bold"))
+
+```
+
+```{r}
+
+all_trips_v1 %>%
+    ggplot(aes(start_time, fill= member_casual)) +
+    labs(x="Hour of the day", y= "Demand of rides", title="Cyclistic's Bike demand by hour in a day") +
+    geom_bar()+
+  theme_minimal() +
+    theme(legend.title = element_text(),
+          legend.text = element_text(face="bold"),
+          axis.title = element_text(),
+          axis.text.x = element_text(),
+          axis.text.y = element_text(),
+          panel.grid.major = element_blank(), 
+          panel.grid.minor = element_blank(),
+          plot.margin = margin(1,1,1.5,1.2, "cm"),
+          plot.title = element_text(face="bold"))
+
+```
+
+```{r}
+all_trips_v1 %>%
+    ggplot(aes(start_time, fill=member_casual)) +
+    geom_bar() +
+    labs(x="Hour of the day",y= "Demand of rides", title="Cyclistic's bike demand per hour by day of the week") +
+    facet_wrap(~ day_of_week)+
+  theme_minimal() +
+    theme(legend.title = element_text(),
+          legend.text = element_text(face="bold"),
+          axis.title = element_text(),
+          axis.text.x = element_text(),
+          axis.text.y = element_text(),
+          panel.grid.major = element_blank(), 
+          panel.grid.minor = element_blank(),
+          plot.margin = margin(1,1,1.5,1.2, "cm"),
+          plot.title = element_text(face="bold"))
+
+```
